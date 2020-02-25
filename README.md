@@ -1,6 +1,6 @@
 ## SimTLS
-This project is a demo to simulate *nix system TLS access under windows using exception and inline hook.
-
+This project serves as a demo to simulate x86-64 *nix system TLS access under windows using exception and inline hook.
+Only clang-cl/LLVM is supported.
 
 ### How to build
 ``` bash
