@@ -1,15 +1,28 @@
-cmake_minimum_required(VERSION 3.5 FATAL_ERROR)
-project(sim_tls)
+cmake_minimum_required(VERSION 3.5)
+
+project(simtls)
+
+# Options for asmjit
+set(ASMJIT_STATIC TRUE)
+set(ASMJIT_BUILD_X86 TRUE)
 
 add_subdirectory(3rd_party)
 
-set(SRC_LIST
+set(3RDPARTY ${PROJECT_SOURCE_DIR}/3rd_party)
+set(SRC 
     main.cc
-) 
+)
 
-add_executable(${PROJECT_NAME} ${SRC_LIST})
+add_executable(${PROJECT_NAME} ${SRC})
+
+target_link_libraries(${PROJECT_NAME} PUBLIC asmjit)
+target_link_libraries(${PROJECT_NAME} PUBLIC Zydis)
+
+target_include_directories(
+    ${PROJECT_NAME} PUBLIC
+    ${3RDPARTY}/asmjit/src
+    ${3RDPARTY}/zydis/include
+)
+
 set_target_properties(${PROJECT_NAME} PROPERTIES
                     CXX_STANDARD 17)
-
-target_include_directories(${PROJECT_NAME} PUBLIC ${CMAKE_SOURCE_DIR}/3rd_party/asmjit/src/asmjit)
-target_link_libraries(${PROJECT_NAME} PUBLIC asmjit)
