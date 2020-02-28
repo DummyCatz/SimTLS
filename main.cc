@@ -29,12 +29,13 @@ uint64_t tlsAccess()
     // executable
     asm("mov $0xfffffffffffffffc, %rax");
     asm("mov %fs:(%rax), %rax");
+    asm(
+		"jmp next \n\t"
+		"next:"
+        "movq %%rax, %0 \n\t" 
+        : "=r"(a)
+	);
 
-    asm("movq %%rax, %0" : "=r"(a));
-
-    // just make a rip relative instruction to validate my rellocation.
-    goto msg;
-msg:
     printf("a=%d\n", a);
 
     return a;
@@ -67,9 +68,8 @@ uint64_t readTLSOffset(int64_t offset)
  * @param dwAllocationGranularity memory allocation granularity
  * @return void*
  */
-static void *findPrevFreeRegion(void *pAddress,
-                                void *pMinAddr,
-                                DWORD dwAllocationGranularity)
+static void *
+findPrevFreeRegion(void *pAddress, void *pMinAddr, DWORD dwAllocationGranularity)
 {
     ULONG_PTR tryAddr = (ULONG_PTR)pAddress;
 
@@ -105,9 +105,8 @@ static void *findPrevFreeRegion(void *pAddress,
  * @param dwAllocationGranularity memory allocation granularity
  * @return void*
  */
-static void *findNextFreeRegion(void *pAddress,
-                                void *pMaxAddr,
-                                DWORD dwAllocationGranularity)
+static void *
+findNextFreeRegion(void *pAddress, void *pMaxAddr, DWORD dwAllocationGranularity)
 {
     ULONG_PTR tryAddr = (ULONG_PTR)pAddress;
 
@@ -174,12 +173,10 @@ static void *allocPrevAvailableMemoryBlock(void *pAlloc, size_t minAddr, DWORD g
 {
     void *allocAddress = nullptr;
     do {
-        pAlloc =
-            findPrevFreeRegion(pAlloc, reinterpret_cast<void *>(minAddr), grad);
+        pAlloc = findPrevFreeRegion(pAlloc, reinterpret_cast<void *>(minAddr), grad);
         if (pAlloc) {
-            allocAddress =
-                VirtualAlloc(pAlloc, 0x1000, MEM_RESERVE | MEM_COMMIT,
-                             PAGE_EXECUTE_READWRITE);
+            allocAddress = VirtualAlloc(pAlloc, 0x1000, MEM_RESERVE | MEM_COMMIT,
+                                        PAGE_EXECUTE_READWRITE);
         }
     } while (pAlloc != nullptr && allocAddress == nullptr &&
              reinterpret_cast<size_t>(pAlloc) > minAddr);
@@ -191,12 +188,10 @@ static void *allocNextAvailableMemoryBlock(void *pAlloc, size_t maxAddr, DWORD g
 {
     void *allocAddress = nullptr;
     do {
-        pAlloc =
-            findNextFreeRegion(pAlloc, reinterpret_cast<void *>(maxAddr), grad);
+        pAlloc = findNextFreeRegion(pAlloc, reinterpret_cast<void *>(maxAddr), grad);
         if (pAlloc) {
-            allocAddress =
-                VirtualAlloc(pAlloc, 0x1000, MEM_RESERVE | MEM_COMMIT,
-                             PAGE_EXECUTE_READWRITE);
+            allocAddress = VirtualAlloc(pAlloc, 0x1000, MEM_RESERVE | MEM_COMMIT,
+                                        PAGE_EXECUTE_READWRITE);
         }
     } while (pAlloc != nullptr && allocAddress == nullptr &&
              reinterpret_cast<size_t>(pAlloc) < maxAddr);
@@ -227,14 +222,19 @@ void *allocNearbyPage(void *targetAddr)
 
 int initZyDis()
 {
-    ZydisDecoderInit(&gDecoder, ZYDIS_MACHINE_MODE_LONG_64,
-                     ZYDIS_ADDRESS_WIDTH_64);
+    ZydisDecoderInit(&gDecoder, ZYDIS_MACHINE_MODE_LONG_64, ZYDIS_ADDRESS_WIDTH_64);
 
     ZydisFormatterInit(&gFormatter, ZYDIS_FORMATTER_STYLE_INTEL);
 
     return 0;
 }
 
+/**
+ * @brief Print instruction
+ *
+ * @param inst instruction
+ * @param addr base address
+ */
 void printInstruction(ZydisDecodedInstruction const &inst, uint64_t addr)
 {
     char buffer[256] = {};
@@ -243,8 +243,21 @@ void printInstruction(ZydisDecodedInstruction const &inst, uint64_t addr)
     std::cout << buffer << std::endl;
 }
 
-bool getRIPRelativeDisplacement(ZydisDecodedInstruction const &inst,
-                                int32_t *value)
+/**
+ * @brief Print operands of an instruction
+ *
+ * @param inst instruction
+ * @param index operand index
+ * @param addr instruction address
+ */
+void printOperand(ZydisDecodedInstruction const &inst, uint8_t index, uint64_t addr)
+{
+    char buffer[256] = {};
+    ZydisFormatterFormatOperand(&gFormatter, &inst, index, buffer, 256, addr);
+    std::cout << buffer << std::endl;
+}
+
+bool getRIPRelativeDisplacement(ZydisDecodedInstruction const &inst, int32_t *value)
 {
     auto count = inst.operand_count;
     bool found = false;
@@ -255,27 +268,30 @@ bool getRIPRelativeDisplacement(ZydisDecodedInstruction const &inst,
 
         switch (opType) {
         case ZYDIS_OPERAND_TYPE_MEMORY: {
-            if (op.mem.base == ZYDIS_REGISTER_RIP &&
-                op.mem.disp.has_displacement) {
+            if (op.mem.base == ZYDIS_REGISTER_RIP && op.mem.disp.has_displacement) {
+                printOperand(inst, i, 0);
                 *value = op.mem.disp.value;
                 found  = true;
-            }
+            } else if (op.mem.base == ZYDIS_REGISTER_NONE &&
+                       op.mem.index == ZYDIS_REGISTER_NONE) {
+                assert("NOT SUPPORTED");
+			}
         } break;
 
         case ZYDIS_OPERAND_TYPE_IMMEDIATE: {
             if (op.imm.is_relative) {
+                printOperand(inst, i, 0);
                 *value = op.imm.value.s;
                 found  = true;
             }
         } break;
 
-		case ZYDIS_OPERAND_TYPE_REGISTER: {
-		} break;
-		
+        case ZYDIS_OPERAND_TYPE_REGISTER: {
+        } break;
 
         default: {
             std::cout << "unhandled operand type: " << opType << std::endl;
-			printInstruction(inst, 0);
+            printInstruction(inst, 0);
         } break;
         }
     }
@@ -381,8 +397,8 @@ bool isTLSAccess(void *address, TLSAccessInfo *info)
 }
 
 int countBytesToCopy(void *target,
-                      int bytesNeeded,
-                      std::vector<ZydisDecodedInstruction> *insts)
+                     int bytesNeeded,
+                     std::vector<ZydisDecodedInstruction> *insts)
 {
     int length    = 0;
     auto &instVec = *insts;
@@ -399,9 +415,8 @@ int countBytesToCopy(void *target,
     return length;
 }
 
-static int fixPatchSpot(void *buffer,
-                        void *src,
-                        std::vector<ZydisDecodedInstruction> &instVec)
+static int
+fixPatchSpot(void *buffer, void *src, std::vector<ZydisDecodedInstruction> &instVec)
 {
     auto address = reinterpret_cast<uint8_t *>(src);
     auto destBuf = reinterpret_cast<uint8_t *>(buffer);
@@ -449,8 +464,7 @@ static bool generateJumpStub(void *buffer, int fsOffset, size_t *sizeOut)
     return true;
 }
 
-static bool
-generateJumpBack(void *bufferAddr, TLSAccessInfo const &info, int offset)
+static bool generateJumpBack(void *bufferAddr, TLSAccessInfo const &info, int offset)
 {
     using namespace asmjit;
 
@@ -460,7 +474,7 @@ generateJumpBack(void *bufferAddr, TLSAccessInfo const &info, int offset)
     auto buffer = reinterpret_cast<uint8_t *>(bufferAddr);
     auto target = reinterpret_cast<uint8_t *>(info.instructionAddress) + offset;
 
-    int jmpDisplacement       = (target - buffer) - 5;
+    int jmpDisplacement        = (target - buffer) - 5;
     *(int *)(&instTemplate[1]) = jmpDisplacement;
 
     std::copy(instTemplate, instTemplate + sizeof(instTemplate), buffer);
@@ -484,8 +498,7 @@ bool makeJumpStub(void *targetAddress, TLSAccessInfo const &info)
             // not supported currently
             assert(false);
         } else {
-            fsOffset =
-                info.exceptionPtr->ContextRecord->Rax + info.disp.reg.offset;
+            fsOffset = info.exceptionPtr->ContextRecord->Rax + info.disp.reg.offset;
         }
     }
 
@@ -497,9 +510,8 @@ bool makeJumpStub(void *targetAddress, TLSAccessInfo const &info)
 
     int owSize = info.length;
     if (info.length < kJmpStubLength) {
-        int copySize =
-            countBytesToCopy(tlsAccessAddr + info.length,
-                              kJmpStubLength - info.length, &decodedInsts);
+        int copySize = countBytesToCopy(tlsAccessAddr + info.length,
+                                        kJmpStubLength - info.length, &decodedInsts);
 
         fixPatchSpot(&buffer[ofs], tlsAccessAddr + info.length, decodedInsts);
         owSize += copySize;
@@ -513,22 +525,22 @@ bool makeJumpStub(void *targetAddress, TLSAccessInfo const &info)
 
 /**
  * @brief Calculate and patch 32bit jump instruction
- * 
+ *
  * @param from from
  * @param to to
- * @return true 
- * @return false 
+ * @return true
+ * @return false
  */
 bool installPatch(void *from, void *to)
 {
     auto targetAddr = reinterpret_cast<uint8_t *>(from);
-    auto stubBuf = reinterpret_cast<uint8_t *>(to);
+    auto stubBuf    = reinterpret_cast<uint8_t *>(to);
 
     uint64_t instBuf = 0x90909000000000e9;
-    int addrOffset  = 0;
-    addrOffset = (int)(stubBuf - targetAddr - 5);
+    int addrOffset   = 0;
+    addrOffset       = (int)(stubBuf - targetAddr - 5);
 
-    instBuf   = instBuf | ((addrOffset << 8) & 0x000000ffffffff00);
+    instBuf  = instBuf | ((addrOffset << 8) & 0x000000ffffffff00);
     DWORD op = 0;
     VirtualProtect(targetAddr, 1, PAGE_EXECUTE_READWRITE, &op);
 
@@ -547,8 +559,7 @@ bool installPatch(void *from, void *to)
 bool patchTLSAccess(TLSAccessInfo const *info)
 {
     auto targetAddr = reinterpret_cast<uint8_t *>(info->instructionAddress);
-    auto stubBuf =
-        reinterpret_cast<uint8_t *>(allocNearbyPage(targetAddr));
+    auto stubBuf    = reinterpret_cast<uint8_t *>(allocNearbyPage(targetAddr));
 
     makeJumpStub(stubBuf, *info);
     installPatch(targetAddr, stubBuf);
@@ -575,12 +586,12 @@ int main()
 {
     initZyDis();
 
-    AddVectoredExceptionHandler(TRUE,
-                                reinterpret_cast<PVECTORED_EXCEPTION_HANDLER>(
-                                    vectoredExceptionHandler));
+    AddVectoredExceptionHandler(TRUE, reinterpret_cast<PVECTORED_EXCEPTION_HANDLER>(
+                                          vectoredExceptionHandler));
 
-    auto r = tlsAccess();
-    std::cout << r << std::endl;
+    std::cout << tlsAccess() << std::endl;
+    std::cout << tlsAccess() << std::endl;
+	
 
     return 0;
 }
